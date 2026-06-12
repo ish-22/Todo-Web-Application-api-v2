@@ -3,63 +3,65 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Todo\IndexTodoRequest;
+use App\Http\Requests\Todo\StoreTodoRequest;
+use App\Http\Requests\Todo\UpdateTodoRequest;
+use App\Http\Resources\TodoResource;
 use App\Models\Todo;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class TodoController extends Controller
 {
-    public function index(Request $request): JsonResponse
+    public function index(IndexTodoRequest $request): JsonResponse
     {
+        $validated = $request->validated();
+
         $todos = $request->user()
             ->todos()
+            ->when($validated['search'] ?? null, function ($query, string $search) {
+                $query->where(function ($searchQuery) use ($search) {
+                    $searchQuery
+                        ->where('title', 'like', "%{$search}%")
+                        ->orWhere('description', 'like', "%{$search}%");
+                });
+            })
+            ->when(($validated['status'] ?? null) && $validated['status'] !== 'all', function ($query, string $status) {
+                $query->where('completed', $status === 'completed');
+            })
+            ->when($validated['priority'] ?? null, function ($query, string $priority) {
+                $query->where('priority', $priority);
+            })
             ->latest()
             ->get()
-            ->map(fn (Todo $todo) => $this->formatTodo($todo));
+            ->map(fn (Todo $todo) => TodoResource::make($todo)->resolve());
 
         return response()->json($todos);
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(StoreTodoRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'title' => ['required', 'string', 'max:100'],
-            'description' => ['nullable', 'string'],
-            'priority' => ['required', 'in:Low,Medium,High'],
-        ]);
+        $validated = $request->validated();
 
         $todo = $request->user()->todos()->create([
-            'title' => trim($validated['title']),
-            'description' => trim($validated['description'] ?? ''),
+            'title' => $validated['title'],
+            'description' => $validated['description'] ?? '',
             'priority' => $validated['priority'],
             'completed' => false,
         ]);
 
-        return response()->json($this->formatTodo($todo), 201);
+        return response()->json(TodoResource::make($todo)->resolve(), 201);
     }
 
-    public function update(Request $request, Todo $todo): JsonResponse
+    public function update(UpdateTodoRequest $request, Todo $todo): JsonResponse
     {
         $this->authorizeTodo($request, $todo);
 
-        $validated = $request->validate([
-            'title' => ['sometimes', 'required', 'string', 'max:100'],
-            'description' => ['nullable', 'string'],
-            'priority' => ['sometimes', 'required', 'in:Low,Medium,High'],
-            'completed' => ['sometimes', 'boolean'],
-        ]);
-
-        if (array_key_exists('title', $validated)) {
-            $validated['title'] = trim($validated['title']);
-        }
-
-        if (array_key_exists('description', $validated)) {
-            $validated['description'] = trim($validated['description'] ?? '');
-        }
+        $validated = $request->validated();
 
         $todo->update($validated);
 
-        return response()->json($this->formatTodo($todo->fresh()));
+        return response()->json(TodoResource::make($todo->fresh())->resolve());
     }
 
     public function destroy(Request $request, Todo $todo): JsonResponse
@@ -76,17 +78,5 @@ class TodoController extends Controller
         if ($todo->user_id !== $request->user()->id) {
             abort(403, 'Unauthorized.');
         }
-    }
-
-    private function formatTodo(Todo $todo): array
-    {
-        return [
-            'id' => $todo->id,
-            'title' => $todo->title,
-            'description' => $todo->description ?? '',
-            'priority' => $todo->priority,
-            'completed' => $todo->completed,
-            'createdAt' => $todo->created_at->diffForHumans(),
-        ];
     }
 }

@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Auth\LoginRequest;
+use App\Http\Requests\Auth\RegisterRequest;
+use App\Http\Resources\UserResource;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -11,17 +14,13 @@ use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
-    public function register(Request $request): JsonResponse
+    public function register(RegisterRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
-            'password' => ['required', 'string', 'min:8'],
-        ]);
+        $validated = $request->validated();
 
         $user = User::create([
             'name' => $validated['name'],
-            'email' => strtolower($validated['email']),
+            'email' => $validated['email'],
             'password' => $validated['password'],
         ]);
 
@@ -29,21 +28,15 @@ class AuthController extends Controller
 
         return response()->json([
             'token' => $token,
-            'user' => [
-                'name' => $user->name,
-                'email' => $user->email,
-            ],
+            'user' => UserResource::make($user),
         ], 201);
     }
 
-    public function login(Request $request): JsonResponse
+    public function login(LoginRequest $request): JsonResponse
     {
-        $validated = $request->validate([
-            'email' => ['required', 'string', 'email'],
-            'password' => ['required', 'string'],
-        ]);
+        $validated = $request->validated();
 
-        $user = User::where('email', strtolower($validated['email']))->first();
+        $user = User::where('email', $validated['email'])->first();
 
         if (! $user || ! Hash::check($validated['password'], $user->password)) {
             throw ValidationException::withMessages([
@@ -55,10 +48,7 @@ class AuthController extends Controller
 
         return response()->json([
             'token' => $token,
-            'user' => [
-                'name' => $user->name,
-                'email' => $user->email,
-            ],
+            'user' => UserResource::make($user),
         ]);
     }
 
@@ -73,9 +63,6 @@ class AuthController extends Controller
     {
         $user = $request->user();
 
-        return response()->json([
-            'name' => $user->name,
-            'email' => $user->email,
-        ]);
+        return response()->json(UserResource::make($user)->resolve());
     }
 }
